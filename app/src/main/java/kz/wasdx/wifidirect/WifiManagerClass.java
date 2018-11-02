@@ -22,8 +22,6 @@ import android.widget.ListView;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import kz.wasdx.wifidirect.R;
-
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -40,27 +38,29 @@ import static android.net.wifi.p2p.WifiP2pManager.WIFI_P2P_STATE_CHANGED_ACTION;
 import static android.net.wifi.p2p.WifiP2pManager.WIFI_P2P_THIS_DEVICE_CHANGED_ACTION;
 
 public class WifiManagerClass extends AppCompatActivity {
-    Button btnStatusWifi, btnSearchWifi, btnSendWifi;
-    ListView listView;
-    TextView messageWifi, connectStatus;
+    private Button btnStatusWifi, btnSearchWifi, btnSendWifi;
+    private ListView listView;
+    private TextView messageWifi;
+    TextView connectStatus;
     static EditText sendData;
 
-    WifiManager wifiManager;
-    WifiP2pManager mManager;
-    WifiP2pManager.Channel mChannel;
+    private WifiManager wifiManager;
+    private WifiP2pManager mManager;
+    private WifiP2pManager.Channel mChannel;
 
-    BroadcastReceiver mReceiver;
-    IntentFilter mIntentFilter;
+    private BroadcastReceiver mReceiver;
+    private IntentFilter mIntentFilter;
 
-    List<WifiP2pDevice> peers=new ArrayList<WifiP2pDevice>();
-    String[] deviceNameArray;
-    WifiP2pDevice[] deviceArray;
+    private List<WifiP2pDevice> peers=new ArrayList<WifiP2pDevice>();
+    private String[] deviceNameArray;
+    private WifiP2pDevice[] deviceArray;
 
     static final int MESSAGE_READ=1;
 
-    ServerClass serverClass;
-    ClientClass clientClass;
-    SendReceive sendReceive;
+    private ServerClass serverClass;
+    private ClientClass clientClass;
+    private SendReceive sendReceive;
+    private writeOnStream wrt;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -71,7 +71,20 @@ public class WifiManagerClass extends AppCompatActivity {
         exqListener();
     }
 
+    Handler handler=new Handler(new Handler.Callback() {
+        @Override
+        public boolean handleMessage(Message message) {
+            switch (message.what){
+                case MESSAGE_READ:
+                    byte[] readBuff= (byte[]) message.obj;
+                    String tempMsg=new String(readBuff,0,message.arg1);
+                    messageWifi.setText(tempMsg);
+                    break;
 
+            }
+            return true;
+        }
+    });
 
     private void exqListener() {
         btnStatusWifi.setOnClickListener(new View.OnClickListener(){
@@ -128,8 +141,10 @@ public class WifiManagerClass extends AppCompatActivity {
         btnSendWifi.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                String message=messageWifi.getText().toString();
-                sendReceive.write(message.getBytes());
+                String message=sendData.getText().toString();
+                //sendReceive.setMessage(message);
+                wrt=new writeOnStream(message,sendReceive.getOutputStream());
+                wrt.start();
             }
         });
     }
@@ -212,4 +227,103 @@ public class WifiManagerClass extends AppCompatActivity {
         super.onPause();
         unregisterReceiver(mReceiver);
     }
+
+    public class ServerClass extends Thread{
+        Socket socket;
+        ServerSocket serverSocket;
+
+        @Override
+        public void run(){
+            try{
+                serverSocket=new ServerSocket(8888);
+                socket=serverSocket.accept();
+                sendReceive=new SendReceive(socket);
+                sendReceive.start();
+            }catch (IOException e){
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private class SendReceive extends Thread{
+        private Socket socket;
+        private InputStream inputStream;
+        private OutputStream outputStream;
+
+        public OutputStream getOutputStream() {
+            return outputStream;
+        }
+
+        public void setOutputStream(OutputStream outputStream) {
+            this.outputStream = outputStream;
+        }
+
+        public SendReceive(Socket skt){
+            socket=skt;
+            try{
+                inputStream=socket.getInputStream();
+                outputStream=socket.getOutputStream();
+            }catch (IOException e){
+                e.printStackTrace();
+            }
+        }
+
+        @Override
+        public void run(){
+            byte[] buffer=new byte[1024];
+            int bytes;
+
+            while(socket!=null){
+                try{
+                    bytes=inputStream.read(buffer);
+                    if(bytes>0){
+                        handler.obtainMessage(MESSAGE_READ,bytes,-1,buffer).sendToTarget();
+                    }
+                }catch (IOException e){
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+
+    private class writeOnStream extends Thread{
+        OutputStream outputStream;
+        String message;
+
+        public writeOnStream(String message,OutputStream outputStr){
+            this.message=message;
+            this.outputStream=outputStr;
+        }
+
+        public void run(){
+            try {
+                outputStream.write(message.getBytes());
+                sendReceive.setOutputStream(outputStream);
+            }catch (IOException e){
+                e.printStackTrace();
+            }
+        }
+    }
+
+    public class ClientClass extends Thread{
+        Socket socket;
+        String hostAdd;
+
+        public ClientClass(InetAddress hostAddress){
+            hostAdd=hostAddress.getHostAddress();
+            socket=new Socket();
+        }
+
+        @Override
+        public void run(){
+            try{
+                socket.connect(new InetSocketAddress(hostAdd,8888),500);
+                sendReceive=new SendReceive(socket);
+                sendReceive.start();
+            }catch (IOException e){
+                e.printStackTrace();
+            }
+        }
+    }
+
 }
